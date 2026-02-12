@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.recommend import recommend_from_row  # noqa
+from src.github_client import GitHubClient # noqa
 
 app = FastAPI(title="Dev Productivity AI API")
 
@@ -154,11 +155,41 @@ async def get_developer_stats(name: str):
     }
 
 
+@app.get("/api/github/repos")
+async def search_repos(token: str, query: str = ""):
+    """
+    Search/List user repositories using a github token.
+    """
+    if not token or not token.strip():
+        raise HTTPException(status_code=400, detail="Token required")
+    
+    try:
+        client = GitHubClient(token=token)
+        #User All Git Repositories 
+        url = "https://api.github.com/user/repos"
+        repos = client._get(url, params={"sort": "updated", "per_page": 50})
+        
+        if query:
+            repos = [r for r in repos if query.lower() in r.get("full_name", "").lower()]
+            
+        return [
+            {
+                "full_name": r.get("full_name"),
+                "name": r.get("name"),
+                "owner": r.get("owner", {}).get("login"),
+            }
+            for r in repos
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/refresh")
 async def refresh_data(
     owner: Optional[str] = Query(default=None),
     repo: Optional[str] = Query(default=None),
     days: int = Query(default=120),
+    token: Optional[str] = Query(default=None),
 ):
     owner = (owner or os.getenv("GITHUB_OWNER") or "").strip()
     repo = (repo or os.getenv("GITHUB_REPO") or "").strip()
@@ -178,13 +209,17 @@ async def refresh_data(
     if not build_processed_path.exists():
         raise HTTPException(status_code=500, detail=f"Missing script: {build_processed_path}")
 
-    out1 = run_script([
+    cmd1 = [
         sys.executable,
         str(build_dataset_path),
         "--owner", owner,
         "--repo", repo,
         "--days", str(days),
-    ])
+    ]
+    if token:
+        cmd1.extend(["--token", token])
+
+    out1 = run_script(cmd1)
 
     out2 = run_script([
         sys.executable,

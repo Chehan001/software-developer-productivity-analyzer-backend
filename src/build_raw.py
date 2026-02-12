@@ -15,9 +15,9 @@ def iso_now_minus_days(days: int) -> str:
     return dt.isoformat()
 
 
-def build_raw(owner: str, repo: str, days: int = 120) -> None:
+def build_raw(owner: str, repo: str, days: int = 120, token: str = None) -> None:
     os.makedirs("data/raw", exist_ok=True)
-    client = GitHubClient()
+    client = GitHubClient(token=token)
 
     since_iso = iso_now_minus_days(days)
 
@@ -95,8 +95,9 @@ def main():
     ap.add_argument("--owner", required=True)
     ap.add_argument("--repo", required=True)
     ap.add_argument("--days", type=int, default=120)
+    ap.add_argument("--token", default=None)
     args = ap.parse_args()
-    build_raw(args.owner, args.repo, args.days)
+    build_raw(args.owner, args.repo, args.days, token=args.token)
 
 
 if __name__ == "__main__":

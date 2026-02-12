@@ -11,11 +11,16 @@ except ImportError:
 
 
 class GitHubClient:
-    def __init__(self, sleep_s: float = 0.2):
+    def __init__(self, token: Optional[str] = None, sleep_s: float = 0.2):
         self.sleep_s = sleep_s
+        self.token = token
 
     def _get(self, url: str, params: Optional[dict] = None) -> Any:
-        r = requests.get(url, headers=DEFAULT_HEADERS, params=params, timeout=30)
+        headers = DEFAULT_HEADERS.copy()
+        if self.token:
+            headers["Authorization"] = f"token {self.token}"
+        
+        r = requests.get(url, headers=headers, params=params, timeout=30)
 
       
         if r.status_code == 403 and "rate limit" in r.text.lower():
