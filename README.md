@@ -46,5 +46,4 @@ cp .env.example .env
 
 
 
-
-.\venv\Scripts\uvicorn src.api:app --reload
+Backend run -- >  python -m uvicorn src.api:app --host 127.0.0.1 --port 8001 

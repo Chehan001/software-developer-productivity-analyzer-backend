@@ -78,14 +78,32 @@ def repo_activity(owner: Optional[str], repo: Optional[str], token: Optional[str
     for item in commits[:limit]:
         commit = item.get("commit") or {}
         author = item.get("author") or {}
+        details = {}
+        if item.get("sha"):
+            try:
+                details = client.get_commit(owner, repo, item["sha"])
+            except RuntimeError:
+                details = {}
+        stats = details.get("stats") or {}
         recent_commits.append({
             "sha": item.get("sha"),
             "message": (commit.get("message") or "").split("\n")[0],
             "author_login": (author or {}).get("login"),
             "author_name": (commit.get("author") or {}).get("name"),
             "date": (commit.get("author") or {}).get("date"),
-            "additions": None,
-            "deletions": None,
+            "additions": stats.get("additions"),
+            "deletions": stats.get("deletions"),
+            "files_changed": len(details.get("files") or []),
+            "files": [
+                {
+                    "filename": file.get("filename"),
+                    "status": file.get("status"),
+                    "additions": file.get("additions"),
+                    "deletions": file.get("deletions"),
+                }
+                for file in (details.get("files") or [])[:8]
+            ],
+            "html_url": details.get("html_url"),
         })
 
     pull_requests = client.list_pull_requests(owner, repo, state="all", max_pages=2)
@@ -345,6 +363,9 @@ async def refresh_data(
 
     out3 = None
     if train_model_path.exists():
+        for artifact in (MODEL_PATH, COLS_PATH):
+            if artifact.exists():
+                artifact.unlink()
         out3 = run_script([
             sys.executable,
             str(train_model_path),

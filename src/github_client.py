@@ -64,10 +64,6 @@ class GitHubClient:
         url = f"{GITHUB_API}/repos/{owner}/{repo}/commits/{sha}"
         return self._get(url)
 
-    def get_repository(self, owner: str, repo: str) -> Dict[str, Any]:
-        url = f"{GITHUB_API}/repos/{owner}/{repo}"
-        return self._get(url)
-
     def list_pull_requests(self, owner: str, repo: str, state: str = "all", max_pages: int = 5) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         page = 1
