@@ -47,6 +47,13 @@ def build_raw(owner: str, repo: str, days: int = 120, token: str = None) -> None
 
     print(f"Fetching pull requests for {owner}/{repo}...")
     prs = client.list_pull_requests(owner, repo, state="all", max_pages=5)
+    cutoff = datetime.now(timezone.utc) - pd.Timedelta(days=days)
+    prs_in_range = []
+    for pr in prs:
+        created_at = pd.to_datetime(pr.get("created_at"), utc=True, errors="coerce")
+        if pd.notna(created_at) and created_at.to_pydatetime() >= cutoff:
+            prs_in_range.append(pr)
+    prs = prs_in_range
 
     pr_rows = []
     review_rows = []

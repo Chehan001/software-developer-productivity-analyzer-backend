@@ -70,7 +70,8 @@ def repo_activity(owner: Optional[str], repo: Optional[str], token: Optional[str
         return {"commits": [], "pull_requests": []}
 
     client = GitHubClient(token=token)
-    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    since_iso = cutoff.isoformat()
 
     commits = client.list_repo_commits(owner, repo, since_iso=since_iso, per_page=100, max_pages=1)
     recent_commits = []
@@ -83,13 +84,21 @@ def repo_activity(owner: Optional[str], repo: Optional[str], token: Optional[str
             "author_login": (author or {}).get("login"),
             "author_name": (commit.get("author") or {}).get("name"),
             "date": (commit.get("author") or {}).get("date"),
-            "additions": 0,
-            "deletions": 0,
+            "additions": None,
+            "deletions": None,
         })
 
     pull_requests = client.list_pull_requests(owner, repo, state="all", max_pages=2)
     recent_prs = []
-    for pr in pull_requests[:limit]:
+    for pr in pull_requests:
+        created_at = pr.get("created_at")
+        if not created_at:
+            continue
+        try:
+            if datetime.fromisoformat(created_at.replace("Z", "+00:00")) < cutoff:
+                continue
+        except ValueError:
+            continue
         user = pr.get("user") or {}
         recent_prs.append({
             "pr_number": pr.get("number"),
@@ -99,6 +108,8 @@ def repo_activity(owner: Optional[str], repo: Optional[str], token: Optional[str
             "created_at": pr.get("created_at"),
             "merged_at": pr.get("merged_at"),
         })
+        if len(recent_prs) >= limit:
+            break
 
     return {"commits": recent_commits, "pull_requests": recent_prs}
 
