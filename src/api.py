@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -15,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.config import GITHUB_API  # noqa
 from src.recommend import recommend_from_row  # noqa
 from src.github_client import GitHubClient # noqa
 
@@ -60,6 +63,44 @@ def add_risk_scores(dev_df: pd.DataFrame, model, feature_cols) -> pd.DataFrame:
     X = X.replace([float("inf"), float("-inf")], 0).fillna(0)
     dev_df["slowdown_risk"] = model.predict_proba(X)[:, 1]
     return dev_df
+
+
+def repo_activity(owner: Optional[str], repo: Optional[str], token: Optional[str] = None, limit: int = 12, days: int = 30):
+    if not owner or not repo:
+        return {"commits": [], "pull_requests": []}
+
+    client = GitHubClient(token=token)
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    commits = client.list_repo_commits(owner, repo, since_iso=since_iso, per_page=100, max_pages=1)
+    recent_commits = []
+    for item in commits[:limit]:
+        commit = item.get("commit") or {}
+        author = item.get("author") or {}
+        recent_commits.append({
+            "sha": item.get("sha"),
+            "message": (commit.get("message") or "").split("\n")[0],
+            "author_login": (author or {}).get("login"),
+            "author_name": (commit.get("author") or {}).get("name"),
+            "date": (commit.get("author") or {}).get("date"),
+            "additions": 0,
+            "deletions": 0,
+        })
+
+    pull_requests = client.list_pull_requests(owner, repo, state="all", max_pages=2)
+    recent_prs = []
+    for pr in pull_requests[:limit]:
+        user = pr.get("user") or {}
+        recent_prs.append({
+            "pr_number": pr.get("number"),
+            "title": pr.get("title"),
+            "author_login": user.get("login"),
+            "state": pr.get("state"),
+            "created_at": pr.get("created_at"),
+            "merged_at": pr.get("merged_at"),
+        })
+
+    return {"commits": recent_commits, "pull_requests": recent_prs}
 
 
 def tail(s: str, n: int = 3000) -> str:
@@ -120,6 +161,71 @@ async def get_developers():
     if df.empty:
         return []
     return sorted(df["developer"].astype(str).unique().tolist())
+
+
+@app.get("/api/repository")
+async def get_repository(owner: str, repo: str, token: Optional[str] = Query(default=None)):
+    try:
+        repository = GitHubClient(token=token).get_repository(owner, repo)
+    except RuntimeError as exc:
+        detail = str(exc)
+        status_code = next((code for code in (401, 403, 404) if f" {code}:" in detail), 502)
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    license_info = repository.get("license") or {}
+    return {
+        "full_name": repository.get("full_name"),
+        "description": repository.get("description"),
+        "html_url": repository.get("html_url"),
+        "language": repository.get("language"),
+        "stars": repository.get("stargazers_count", 0),
+        "forks": repository.get("forks_count", 0),
+        "open_issues": repository.get("open_issues_count", 0),
+        "default_branch": repository.get("default_branch"),
+        "license": license_info.get("spdx_id") or license_info.get("name"),
+        "visibility": repository.get("visibility") or ("private" if repository.get("private") else "public"),
+        "created_at": repository.get("created_at"),
+        "pushed_at": repository.get("pushed_at"),
+        "topics": repository.get("topics", []),
+        "archived": repository.get("archived", False),
+    }
+
+
+def read_activity(path: Path, sort_column: str, limit: int) -> list[dict[str, Any]]:
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        frame = pd.read_csv(path)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError):
+        return []
+    if sort_column in frame.columns:
+        frame = frame.sort_values(sort_column, ascending=False, na_position="last")
+    return json.loads(frame.head(limit).to_json(orient="records", date_format="iso"))
+
+
+@app.get("/api/activity")
+async def get_activity(
+    owner: Optional[str] = Query(default=None),
+    repo: Optional[str] = Query(default=None),
+    token: Optional[str] = Query(default=None),
+    days: int = Query(default=30, ge=7, le=365),
+    limit: int = Query(default=12, ge=1, le=50),
+):
+    if owner or repo:
+        if not owner or not repo:
+            raise HTTPException(status_code=400, detail="Both owner and repo are required")
+        try:
+            return repo_activity(owner, repo, token=token, limit=limit, days=days)
+        except RuntimeError as exc:
+            detail = str(exc)
+            status_code = next((code for code in (401, 403, 404) if f" {code}:" in detail), 502)
+            raise HTTPException(status_code=status_code, detail=detail)
+
+    raw_path = PROJECT_ROOT / "data" / "raw"
+    return {
+        "commits": read_activity(raw_path / "commits.csv", "date", limit),
+        "pull_requests": read_activity(raw_path / "pull_requests.csv", "created_at", limit),
+    }
 
 
 @app.get("/api/developer/{name}")
@@ -202,7 +308,7 @@ async def refresh_data(
 
     build_dataset_path = PROJECT_ROOT / "src" / "build_dataset.py"
     build_processed_path = PROJECT_ROOT / "src" / "build_processed.py"
-    train_model_path = PROJECT_ROOT / "src" / "train_model.py"
+    train_model_path = PROJECT_ROOT / "src" / "train.py"
 
     if not build_dataset_path.exists():
         raise HTTPException(status_code=500, detail=f"Missing script: {build_dataset_path}")

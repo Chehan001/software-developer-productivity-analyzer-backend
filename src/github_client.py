@@ -15,6 +15,10 @@ class GitHubClient:
         self.sleep_s = sleep_s
         self.token = token
 
+    def get_repository(self, owner: str, repo: str) -> Dict[str, Any]:
+        url = f"{GITHUB_API}/repos/{owner}/{repo}"
+        return self._get(url)
+
     def _get(self, url: str, params: Optional[dict] = None) -> Any:
         headers = DEFAULT_HEADERS.copy()
         if self.token:
@@ -58,6 +62,10 @@ class GitHubClient:
 
     def get_commit(self, owner: str, repo: str, sha: str) -> Dict[str, Any]:
         url = f"{GITHUB_API}/repos/{owner}/{repo}/commits/{sha}"
+        return self._get(url)
+
+    def get_repository(self, owner: str, repo: str) -> Dict[str, Any]:
+        url = f"{GITHUB_API}/repos/{owner}/{repo}"
         return self._get(url)
 
     def list_pull_requests(self, owner: str, repo: str, state: str = "all", max_pages: int = 5) -> List[Dict[str, Any]]:

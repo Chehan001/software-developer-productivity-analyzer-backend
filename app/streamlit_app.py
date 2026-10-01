@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -9,13 +10,14 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-PROJECT_ROOT = Path(__file__).resolve().parents[0]  
-sys.path.append(str(PROJECT_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
     from src.recommend import recommend_from_row
+    from src.repo_utils import parse_repo_url
 except Exception:
-    st.error("Could not import recommendation engine. Ensure src/ is on PYTHONPATH.")
+    st.error("Could not import project utilities. Ensure src/ is on PYTHONPATH.")
     st.stop()
 
 st.set_page_config(page_title="Dev Productivity AI", layout="wide")
@@ -50,12 +52,51 @@ def line_chart(df, xcol, ycol, title):
     st.pyplot(fig)
 
 
+def run_repo_analysis(repo_url: str, days: int = 120):
+    owner, repo = parse_repo_url(repo_url)
+
+    commands = [
+        [sys.executable, "-m", "src.build_dataset", "--owner", owner, "--repo", repo, "--days", str(days)],
+        [sys.executable, "-m", "src.build_processed"],
+        [sys.executable, "-m", "src.train"],
+    ]
+
+    for cmd in commands:
+        result = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{msg}")
+
+    return owner, repo
+
+
 def main():
     st.title("AI Developer Productivity Analyzer (MVP)")
 
+    st.sidebar.header("Analyze a repository")
+    repo_url = st.sidebar.text_input(
+        "GitHub repository URL",
+        value="",
+        placeholder="https://github.com/microsoft/vscode",
+    )
+    days = st.sidebar.number_input("Days to analyze", min_value=7, max_value=365, value=120)
+
+    if st.sidebar.button("Analyze repo") and repo_url.strip():
+        try:
+            with st.spinner("Collecting repo activity and training the model..."):
+                owner, repo = run_repo_analysis(repo_url, days=days)
+            st.sidebar.success(f"Finished: {owner}/{repo}")
+        except Exception as exc:
+            st.sidebar.error(f"Analysis failed: {exc}")
+
     df = load_data()
     if df.empty:
-        st.warning("No data found. Run the pipeline first (build_dataset -> build_processed).")
+        st.warning("No data found. Paste a GitHub repo URL and click 'Analyze repo' to generate data.")
         return
 
     if "developer" not in df.columns or "week" not in df.columns:
